@@ -1,3 +1,3 @@
 - Alexis Bachmann
 - Bioinformatics, Systems Genetics and Metabolism
-- R and python
+- R and statistical modelling

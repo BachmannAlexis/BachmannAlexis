@@ -1,3 +1,3 @@
-@BachmannAlexis
-Bioinformatics, Systems Genetics and Metabolism
-R and python
+- Alexis Bachmann
+- Bioinformatics, Systems Genetics and Metabolism
+- R and python

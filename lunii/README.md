@@ -25,6 +25,9 @@ python3 build_studio_pack.py Comptines --title "Mes comptines"
 
 Then drag `Mes comptines.zip` into Lunii.QT with the Lunii plugged in.
 
+Each song gets its own picture in the menu: `<song>.png` if you provide one, otherwise the cover art
+embedded in the MP3, otherwise a coloured card with a motif (star, moon, heart, sun, flower, note) and the song name.
+
 On the Lunii: select the pack, press OK, turn the wheel to choose a song, press OK to play.
 At the end of a song (or with HOME) it returns to the song list.
 

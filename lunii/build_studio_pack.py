@@ -15,7 +15,8 @@ Optional files in MY_FOLDER:
     _titre.mp3           audio announcing the pack name (played on the cover)
     _cover.png           image for the cover (otherwise one is generated with the title)
     <track>.titre.mp3    audio announcing a track in the menu (e.g. "Le petit bonhomme.titre.mp3")
-    <track>.png          image for a track in the menu (otherwise one is generated with its name)
+    <track>.png          image for a track in the menu (otherwise the cover art embedded in the
+                         audio file is used, or a coloured card with a motif and the track name)
 
 Without a title audio, the first seconds of the track are used as its menu preview
 (this needs ffmpeg; otherwise the menu entry is silent).
@@ -27,6 +28,7 @@ import argparse
 import hashlib
 import io
 import json
+import math
 import re
 import shutil
 import subprocess
@@ -36,7 +38,7 @@ import uuid
 import zipfile
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 AUDIO_EXTS = {".mp3", ".m4a", ".aac", ".ogg", ".oga", ".opus", ".wav", ".flac", ".wma"}
 SCREEN_SIZE = (320, 240)
@@ -83,21 +85,82 @@ def wrap(draw, text, font, max_width):
     return lines
 
 
-def text_image(text):
-    img = Image.new("RGB", SCREEN_SIZE, "black")
+# Background colours and motifs cycled through so that each menu entry looks different.
+# Index 0 is used by the pack cover, tracks start at 1.
+CARD_COLOURS = ["#283593", "#1f6fb2", "#c0392b", "#27ae60", "#8e44ad", "#d35400", "#16a085", "#b8860b", "#c2185b"]
+MOTIFS = ["star", "moon", "heart", "sun", "flower", "note"]
+
+
+def draw_motif(draw, motif, cx, cy, r, bg):
+    white = "white"
+    if motif == "star":
+        pts = []
+        for i in range(10):
+            radius = r if i % 2 == 0 else r * 0.45
+            angle = math.pi / 2 + i * math.pi / 5
+            pts.append((cx + radius * math.cos(angle), cy - radius * math.sin(angle)))
+        draw.polygon(pts, fill=white)
+    elif motif == "moon":
+        draw.ellipse((cx - r, cy - r, cx + r, cy + r), fill=white)
+        draw.ellipse((cx - r * 0.45, cy - r * 1.05, cx + r * 1.35, cy + r * 0.75), fill=bg)
+    elif motif == "heart":
+        h = r * 0.55
+        draw.ellipse((cx - r, cy - r * 0.8, cx, cy - r * 0.8 + 2 * h), fill=white)
+        draw.ellipse((cx, cy - r * 0.8, cx + r, cy - r * 0.8 + 2 * h), fill=white)
+        draw.polygon([(cx - r * 0.97, cy - r * 0.1), (cx + r * 0.97, cy - r * 0.1), (cx, cy + r)], fill=white)
+    elif motif == "sun":
+        for i in range(12):
+            angle = i * math.pi / 6
+            draw.line((cx + r * 0.6 * math.cos(angle), cy + r * 0.6 * math.sin(angle),
+                       cx + r * math.cos(angle), cy + r * math.sin(angle)), fill=white, width=5)
+        draw.ellipse((cx - r * 0.5, cy - r * 0.5, cx + r * 0.5, cy + r * 0.5), fill=white)
+    elif motif == "flower":
+        for i in range(6):
+            angle = i * math.pi / 3
+            px, py = cx + r * 0.55 * math.cos(angle), cy + r * 0.55 * math.sin(angle)
+            draw.ellipse((px - r * 0.42, py - r * 0.42, px + r * 0.42, py + r * 0.42), fill=white)
+        draw.ellipse((cx - r * 0.3, cy - r * 0.3, cx + r * 0.3, cy + r * 0.3), fill=bg)
+    else:  # musical note
+        draw.ellipse((cx - r * 0.75, cy + r * 0.35, cx - r * 0.05, cy + r * 0.95), fill=white)
+        draw.ellipse((cx + r * 0.25, cy + r * 0.15, cx + r * 0.95, cy + r * 0.75), fill=white)
+        draw.line((cx - r * 0.1, cy + r * 0.65, cx - r * 0.1, cy - r * 0.8), fill=white, width=6)
+        draw.line((cx + r * 0.9, cy + r * 0.45, cx + r * 0.9, cy - r), fill=white, width=6)
+        draw.polygon([(cx - r * 0.1, cy - r * 0.8), (cx + r * 0.9, cy - r), (cx + r * 0.9, cy - r * 0.65),
+                      (cx - r * 0.1, cy - r * 0.45)], fill=white)
+
+
+def text_image(text, index=0):
+    """A coloured card with a motif and the title; `index` picks the colour and motif."""
+    bg = CARD_COLOURS[index % len(CARD_COLOURS)]
+    img = Image.new("RGB", SCREEN_SIZE, bg)
     draw = ImageDraw.Draw(img)
-    for size in (40, 34, 28, 22, 18):
+    draw_motif(draw, MOTIFS[index % len(MOTIFS)], SCREEN_SIZE[0] // 2, 62, 42, bg)
+    text_top, text_height = 116, SCREEN_SIZE[1] - 116 - 10
+    for size in (34, 30, 26, 22, 18, 15):
         font = load_font(size)
         lines = wrap(draw, text, font, SCREEN_SIZE[0] - 24)
-        line_h = size + 6
-        if len(lines) * line_h <= SCREEN_SIZE[1] - 24:
+        line_h = size + 5
+        if len(lines) * line_h <= text_height:
             break
-    y = (SCREEN_SIZE[1] - len(lines) * line_h) // 2
+    y = text_top + (text_height - len(lines) * line_h) // 2
     for line in lines:
         x = (SCREEN_SIZE[0] - draw.textlength(line, font=font)) // 2
-        draw.text((x, y), line, font=font, fill="white")
+        draw.text((x, y), line, font=font, fill="white", stroke_width=2, stroke_fill="black")
         y += line_h
     return img
+
+
+def embedded_cover(path):
+    """Cover art embedded in an audio file, cropped to the screen (None if absent or no ffmpeg)."""
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        return None
+    with tempfile.TemporaryDirectory() as tmp:
+        out = Path(tmp) / "cover.png"
+        cmd = [ffmpeg, "-v", "quiet", "-y", "-i", str(path), "-map", "0:v:0", "-frames:v", "1", str(out)]
+        if subprocess.run(cmd).returncode != 0 or not out.exists():
+            return None
+        return ImageOps.fit(Image.open(out).convert("RGB"), SCREEN_SIZE)
 
 
 def png_bytes(img):
@@ -181,7 +244,11 @@ def build(folder, title, output):
         play_action_id = str(uuid.uuid5(pack_uuid, f"action-{index}-{track.name}"))
 
         img = optional(track.with_suffix(".png"))
-        img = png_bytes(Image.open(io.BytesIO(img))) if img else png_bytes(text_image(name))
+        if img:
+            img = Image.open(io.BytesIO(img))
+        else:
+            img = embedded_cover(track) or text_image(name, index + 1)
+        img = png_bytes(img)
         title_audio = optional(track.with_name(track.stem + ".titre.mp3")) or audio_preview(track)
         back_to_menu = {"actionNode": menu_id, "optionIndex": index}
 
